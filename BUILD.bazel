@@ -1,0 +1,40 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+# The Slide movement class, split into its own library so the header is staged
+# for dependents and slide.cpp gets compiled (and can later be unit-tested).
+cc_library(
+    name = "slide",
+    srcs = ["src/slide.cpp"],
+    hdrs = ["include/slide.hpp"],
+    # Propagates -Iinclude to dependents so headers are included unqualified.
+    includes = ["include"],
+    # Warn on switch statements that don't handle every enum value.
+    copts = ["-Wswitch"],
+    deps = [
+        "@raylib//:raylib",
+    ]
+)
+
+cc_library(
+    name = "communication",
+    srcs = ["src/communication.cpp"],
+    hdrs = ["include/communication.hpp"],
+    # Propagates -Iinclude to dependents so headers are included unqualified.
+    includes = ["include"],
+    deps = [
+        "@boost.asio//:boost.asio",
+    ],
+)
+
+cc_binary(
+    name = "game",
+    srcs = ["src/main.cpp"],
+    # Warn on switch statements that don't handle every enum value. Scoped to
+    # our code so raylib (which compiles with -w) is unaffected.
+    copts = ["-Wswitch"],
+    deps = [
+        ":slide",
+        "@raylib//:raylib",
+        "communication",
+    ],
+)

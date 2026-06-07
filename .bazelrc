@@ -1,0 +1,3 @@
+# Bzlmod is the default on modern Bazel; set explicitly for clarity.
+common --enable_bzlmod
+build --cxxopt=-std=c++17
