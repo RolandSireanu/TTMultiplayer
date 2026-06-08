@@ -11,7 +11,7 @@ class Server
 public:
     Server() = default;
 
-    const std::array<std::byte, 1200>& ReadFrame();
+    std::pair<const std::array<std::byte, 1200>&, std::size_t> ReadFrame();
     void SendFrame(const std::array<std::byte, 1200>& aBuffer);
 
 private:

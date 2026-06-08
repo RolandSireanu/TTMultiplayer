@@ -45,12 +45,14 @@ int main(void)
     Slide lVillainSlide {screenWidth, screenHeight, 10, true};
     #ifdef SERVER_SIDE
         Server lServer{};
-        std::array<std::byte, 1200> lEmpty{};
-        lServer.ReadFrame();
-        std::cout << "Got the message \n";
+        
+        const auto& [lArray, lNrOfBytes] = lServer.ReadFrame();
+        std::cout << std::hex;
+        for(size_t i{0}; i<lNrOfBytes; ++i)
+            std::cout << "Byte " << i << " : " << std::to_integer<int>(lArray[i]) << "\n";        
     #else
         Client lClient{};
-        std::array<std::byte, 1200> lEmpty{};
+        std::array<std::byte, 1200> lEmpty{std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
         while(1)
             lClient.SendFrame(lEmpty);
     #endif
