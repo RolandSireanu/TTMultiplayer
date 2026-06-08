@@ -16,7 +16,6 @@ void Slide::Move(Direction aDirection) noexcept
     std::cout << "After clamp mX = " << mX << std::endl;
 }
 
-
 void Slide::Draw() const
 {
     DrawRectangle(mX,mY,mSlideWidth,mSlideHeight,DARKBLUE);

@@ -19,7 +19,6 @@
 
  }
 
-
  Client::Client()
  {
     mSocket.open(boost::asio::ip::udp::v4());

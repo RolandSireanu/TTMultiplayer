@@ -40,11 +40,21 @@ int main(void)
     // Initialization
     //--------------------------------------------------------------------------------------
     const int screenWidth = 800;
-    const int screenHeight = 450;
+    const int screenHeight = 450;    
     Slide lSlide {screenWidth, screenHeight, 10};
     Slide lVillainSlide {screenWidth, screenHeight, 10, true};
-    Server lServer{};
-    lServer.ReadFrame();
+    #ifdef SERVER_SIDE
+        Server lServer{};
+        std::array<std::byte, 1200> lEmpty{};
+        lServer.ReadFrame();
+        std::cout << "Got the message \n";
+    #else
+        Client lClient{};
+        std::array<std::byte, 1200> lEmpty{};
+        while(1)
+            lClient.SendFrame(lEmpty);
+    #endif
+    
 
     InitWindow(screenWidth, screenHeight, "raylib [core] example - basic window");
 

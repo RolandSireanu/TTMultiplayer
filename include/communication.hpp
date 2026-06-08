@@ -50,7 +50,7 @@ public:
 private:
     boost::asio::io_context mIoContext;
     boost::asio::ip::udp::resolver mResolver{mIoContext};
-    boost::asio::ip::udp::endpoint mServer {*mResolver.resolve(boost::asio::ip::udp::v4(), "localhost", "5000").begin()};
+    boost::asio::ip::udp::endpoint mServer {*mResolver.resolve(boost::asio::ip::udp::v4(), "192.168.56.102", "5000").begin()};
     boost::asio::ip::udp::socket mSocket{mIoContext};
 };
 

@@ -27,14 +27,24 @@ cc_library(
 )
 
 cc_binary(
-    name = "game",
+    name = "server",
     srcs = ["src/main.cpp"],
-    # Warn on switch statements that don't handle every enum value. Scoped to
-    # our code so raylib (which compiles with -w) is unaffected.
+    copts = ["-Wswitch"],
+    defines = ["SERVER_SIDE"],
+    deps = [
+        ":slide",
+        "@raylib//:raylib",
+        ":communication",
+    ],
+)
+
+cc_binary(
+    name = "client",
+    srcs = ["src/main.cpp"],
     copts = ["-Wswitch"],
     deps = [
         ":slide",
         "@raylib//:raylib",
-        "communication",
+        ":communication",
     ],
 )
