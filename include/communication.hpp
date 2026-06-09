@@ -46,7 +46,7 @@ public:
     Client();
 
     const std::array<std::byte, 1200>& ReadFrame();
-    void SendFrame(std::span<std::byte> aBuffer);
+    void SendFrame(std::span<const std::byte> aBuffer);
 
 private:
     boost::asio::io_context mIoContext;

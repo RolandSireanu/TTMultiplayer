@@ -27,7 +27,7 @@
  }
 
 //  void Client::SendFrame(const std::array<std::byte, 1200>& aBuffer)
-void Client::SendFrame(std::span<std::byte> aBuffer)
+void Client::SendFrame(std::span<const std::byte> aBuffer)
 {    
     mSocket.send_to(boost::asio::buffer(aBuffer.data(), aBuffer.size_bytes()), mServer);
 }
