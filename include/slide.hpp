@@ -26,6 +26,7 @@ public:
     void Move(Direction aDirection) noexcept;
     void Draw() const;
     void Resize(std::int32_t aXWindowSize, std::int32_t aYWindowSize) noexcept;
+    void SetPosition(std::int32_t aX, std::int32_t aY) noexcept;
     [[nodiscard]] constexpr std::int32_t GetX() const noexcept { return mX; }
     [[nodiscard]] constexpr std::int32_t GetY() const noexcept { return mY; }
 

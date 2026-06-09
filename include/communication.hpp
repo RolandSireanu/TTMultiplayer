@@ -1,3 +1,6 @@
+// Superseded by include/net.hpp (class Client / class Server). Kept for
+// reference but fully disabled so the duplicate class names cannot clash.
+#if 0
 #ifndef COMMUNICATION_HPP
 #define COMMUNICATION_HPP
 
@@ -57,3 +60,4 @@ private:
 
 
 #endif
+#endif  // #if 0 — disabled, superseded by net.hpp

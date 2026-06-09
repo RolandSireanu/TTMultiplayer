@@ -21,6 +21,12 @@ void Slide::Draw() const
     DrawRectangle(mX,mY,mSlideWidth,mSlideHeight,DARKBLUE);
 }
 
+void Slide::SetPosition(std::int32_t aX, std::int32_t aY) noexcept
+{
+    mX = std::clamp(aX, 0, mWindowWidth - mSlideWidth);
+    mY = aY;
+}
+
 void Slide::Resize(std::int32_t aXWindowSize, std::int32_t aYWindowSize) noexcept
 {
     mSlideHeight = aYWindowSize/20; 

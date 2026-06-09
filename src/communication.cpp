@@ -1,6 +1,9 @@
+// Superseded by include/net.hpp (class Client / class Server). Kept for
+// reference but fully disabled so the duplicate class names cannot clash.
+#if 0
 #include <communication.hpp>
 #include <span>
-    
+
  std::pair<const std::array<std::byte, 1200>&, std::size_t> Server::ReadFrame()
  {
     boost::asio::ip::udp::endpoint lSender;
@@ -28,6 +31,7 @@
 
 //  void Client::SendFrame(const std::array<std::byte, 1200>& aBuffer)
 void Client::SendFrame(std::span<const std::byte> aBuffer)
-{    
+{
     mSocket.send_to(boost::asio::buffer(aBuffer.data(), aBuffer.size_bytes()), mServer);
 }
+#endif  // #if 0 — disabled, superseded by net.hpp

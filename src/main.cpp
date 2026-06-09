@@ -1,107 +1,68 @@
-/*******************************************************************************************
-*
-*   raylib [core] example - basic window
-*
-*   Example complexity rating: [★☆☆☆] 1/4
-*
-*   Welcome to raylib!
-*
-*   To test examples, just press F6 and execute 'raylib_compile_execute' script
-*   Note that compiled executable is placed in the same folder as .c file
-*
-*   To test the examples on Web, press F6 and execute 'raylib_compile_execute_web' script
-*   Web version of the program is generated in the same folder as .c file
-*
-*   You can find all basic examples on C:\raylib\raylib\examples folder or
-*   raylib official webpage: www.raylib.com
-*
-*   Enjoy using raylib. :)
-*
-*   Example originally created with raylib 1.0, last time updated with raylib 1.0
-*
-*   Example licensed under an unmodified zlib/libpng license, which is an OSI-certified,
-*   BSD-like license that allows static linking with closed source software
-*
-*   Copyright (c) 2013-2026 Ramon Santamaria (@raysan5)
-*
-********************************************************************************************/
-
 #include "raylib.h"
-#include <cstdint>
 #include "slide.hpp"
-#include <iostream>
-#include "communication.hpp"
+#include "net.hpp"
 #include "messages.hpp"
+#include <iostream>
 
-//------------------------------------------------------------------------------------
-// Program main entry point
-//------------------------------------------------------------------------------------
-int main(void)
+// The server binds SERVER_PORT; the client sends there and learns nothing else
+// up front. On two machines both can use the defaults; for a single-machine
+// test, run the server first, then the client with SERVER_IP = "127.0.0.1".
+static constexpr std::uint16_t   SERVER_PORT {5000};
+static constexpr std::string_view SERVER_IP  {"localhost"};
+
+int main()
 {
-    // Initialization
-    //--------------------------------------------------------------------------------------
-    const int screenWidth = 800;
-    const int screenHeight = 450;    
-    Slide lSlide {screenWidth, screenHeight, 10};
-    Slide lVillainSlide {screenWidth, screenHeight, 10, true};
-    #ifdef SERVER_SIDE
-        Server lServer{};
-        
-        const auto& [lArray, lNrOfBytes] = lServer.ReadFrame();
-        std::cout << std::hex;
-        for(size_t i{0}; i<lNrOfBytes; ++i)
-            std::cout << "Byte " << i << " : " << std::to_integer<int>(lArray[i]) << "\n";        
-    #else
-        Client lClient{};
-        // std::array<std::byte, 1200> lEmpty{std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
-        std::int32_t lIndex {};
-        while(1)
-        {
-            Messages::SlidePosition lCurrentSlidePosition {lIndex++, 127, 245};
-            std::span lTemp{&lCurrentSlidePosition, 1};
-            lClient.SendFrame(std::as_bytes(lTemp));
-        }
-    #endif
-    
+    const int screenWidth  = 800;
+    const int screenHeight = 450;
 
-    InitWindow(screenWidth, screenHeight, "raylib [core] example - basic window");
+    Slide lLocalSlide  {screenWidth, screenHeight, 10};
+    Slide lRemoteSlide {screenWidth, screenHeight, 10, /*villain=*/true};
 
-    SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
-    //--------------------------------------------------------------------------------------
-
-    // Main game loop
-    while (!WindowShouldClose())    // Detect window close button or ESC key
+    // Both classes expose the same send()/poll() pair and clean up their
+    // background receiver thread in the destructor.
+#ifdef SERVER_SIDE
+    Server lNet{SERVER_PORT};            // binds, then learns the client from its first frame
+    Messages::SlidePosition lTemp;
+    while(1)
     {
+        if(lNet.poll(lTemp))
+            std::cout << lTemp.mOrderId << " , " << lTemp.mX << " , " << lTemp.mY << std::endl;
+    }
+#else
+    Client lNet{SERVER_IP, SERVER_PORT}; // sends to the server; receives its replies
+    Messages::SlidePosition lTempSlide {1,100,200};
+    lNet.send(lTempSlide);
+#endif
 
+    std::int32_t lOutgoingOrderId{0};
+
+    InitWindow(screenWidth, screenHeight, "Multiplayer game");
+    SetTargetFPS(60);
+
+    while (!WindowShouldClose())
+    {
+        // --- Input (local player) ---
         if (IsKeyDown(KEY_RIGHT))
-        {
-            lSlide.Move(Slide::Direction::RIGHT);
-            lVillainSlide.Move(Slide::Direction::RIGHT);
-        }
-        
-        if(IsKeyDown(KEY_LEFT))
-        {            
-            lSlide.Move(Slide::Direction::LEFT);
-            lVillainSlide.Move(Slide::Direction::LEFT);
-        }
-        
+            lLocalSlide.Move(Slide::Direction::RIGHT);
+        if (IsKeyDown(KEY_LEFT))
+            lLocalSlide.Move(Slide::Direction::LEFT);
+
+        // --- Send local position; apply newest remote position if one arrived ---
+        Messages::SlidePosition lOut{lOutgoingOrderId++, lLocalSlide.GetX(), lLocalSlide.GetY()};
+        lNet.send(lOut);
+
+        Messages::SlidePosition lIn;
+        if (lNet.poll(lIn))
+            lRemoteSlide.SetPosition(lIn.mX, lIn.mY);
+
+        // --- Draw ---
         BeginDrawing();
-
             ClearBackground(RAYWHITE);
-
-            DrawText("Congrats! You created your first window!", 190, 200, 20, LIGHTGRAY);
-            lSlide.Draw();
-            lVillainSlide.Draw();
-        
-
+            lLocalSlide.Draw();
+            lRemoteSlide.Draw();
         EndDrawing();
-        //----------------------------------------------------------------------------------
     }
 
-    // De-Initialization
-    //--------------------------------------------------------------------------------------
-    CloseWindow();        // Close window and OpenGL context
-    //--------------------------------------------------------------------------------------
-
+    CloseWindow();
     return 0;
 }

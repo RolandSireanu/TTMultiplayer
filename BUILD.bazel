@@ -32,15 +32,27 @@ cc_library(
     includes = ["include"],
 )
 
+cc_library(
+    name = "net",
+    hdrs = ["include/net.hpp"],
+    includes = ["include"],
+    # std::atomic<SlidePosition> is 12 bytes — not hardware-lock-free, so GCC
+    # lowers it to libatomic calls. Propagates -latomic to dependents.
+    linkopts = ["-latomic"],
+    deps = [
+        ":messages",
+        "@boost.asio//:boost.asio",
+    ],
+)
+
 cc_binary(
     name = "server",
     srcs = ["src/main.cpp"],
     copts = ["-Wswitch"],
     defines = ["SERVER_SIDE"],
     deps = [
+        ":net",
         ":slide",
-        ":communication",
-        ":messages",
         "@raylib//:raylib",
     ],
 )
@@ -50,9 +62,8 @@ cc_binary(
     srcs = ["src/main.cpp"],
     copts = ["-Wswitch"],
     deps = [
+        ":net",
         ":slide",
-        ":communication",
-        ":messages",
         "@raylib//:raylib",
     ],
 )
