@@ -1,0 +1,9 @@
+# Bazel symlinks and output
+bazel-*
+
+# Editor / tooling config
+.vscode/
+.claude/
+
+# Claude Code project instructions
+CLAUDE.md

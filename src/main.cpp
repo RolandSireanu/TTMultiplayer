@@ -54,10 +54,13 @@ int main(void)
     #else
         Client lClient{};
         // std::array<std::byte, 1200> lEmpty{std::byte{0xDE}, std::byte{0xAD}, std::byte{0xBE}, std::byte{0xEF}};
-        Messages::SlidePosition lCurrentSlidePosition {127, 245};
-        std::span lTemp{&lCurrentSlidePosition, 1};
+        std::int32_t lIndex {};
         while(1)
+        {
+            Messages::SlidePosition lCurrentSlidePosition {lIndex++, 127, 245};
+            std::span lTemp{&lCurrentSlidePosition, 1};
             lClient.SendFrame(std::as_bytes(lTemp));
+        }
     #endif
     
 
