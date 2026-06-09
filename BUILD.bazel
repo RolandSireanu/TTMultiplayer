@@ -26,6 +26,12 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "messages",
+    hdrs = ["include/messages.hpp"],
+    includes = ["include"],
+)
+
 cc_binary(
     name = "server",
     srcs = ["src/main.cpp"],
@@ -33,8 +39,9 @@ cc_binary(
     defines = ["SERVER_SIDE"],
     deps = [
         ":slide",
-        "@raylib//:raylib",
         ":communication",
+        ":messages",
+        "@raylib//:raylib",
     ],
 )
 
@@ -44,7 +51,8 @@ cc_binary(
     copts = ["-Wswitch"],
     deps = [
         ":slide",
-        "@raylib//:raylib",
         ":communication",
+        ":messages",
+        "@raylib//:raylib",
     ],
 )

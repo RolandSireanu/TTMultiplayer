@@ -5,6 +5,7 @@
 #include <iostream>
 #include <array>
 #include <cstdint>
+#include <span>
 
 class Server
 {
@@ -45,7 +46,7 @@ public:
     Client();
 
     const std::array<std::byte, 1200>& ReadFrame();
-    void SendFrame(const std::array<std::byte, 1200>& aBuffer);
+    void SendFrame(std::span<std::byte> aBuffer);
 
 private:
     boost::asio::io_context mIoContext;

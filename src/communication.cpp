@@ -1,5 +1,5 @@
 #include <communication.hpp>
-
+#include <span>
     
  std::pair<const std::array<std::byte, 1200>&, std::size_t> Server::ReadFrame()
  {
@@ -26,7 +26,8 @@
     mSocket.open(boost::asio::ip::udp::v4());
  }
 
- void Client::SendFrame(const std::array<std::byte, 1200>& aBuffer)
- {    
-    mSocket.send_to(boost::asio::buffer(aBuffer), mServer);
- }
+//  void Client::SendFrame(const std::array<std::byte, 1200>& aBuffer)
+void Client::SendFrame(std::span<std::byte> aBuffer)
+{    
+    mSocket.send_to(boost::asio::buffer(aBuffer.data(), aBuffer.size_bytes()), mServer);
+}
