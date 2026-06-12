@@ -4,69 +4,120 @@
 #include <boost/asio.hpp>
 #include <array>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 
 #include "messages.hpp"
 
-// Decodes a datagram into a SlidePosition, but only when it is exactly the right
-// size. memcpy avoids the strict-aliasing UB of reinterpreting the byte buffer.
-inline std::optional<Messages::SlidePosition> decodeSlide(
-    const std::array<std::byte, 1200>& aBuf, std::size_t aN)
+// Decodes a datagram into a wire message, but only when it is exactly the right
+// size — which also discriminates the two message types, since ServerState and
+// ClientSlide have different wire sizes. fromWire() reads each field big-endian
+// one byte at a time, so decoding does not depend on this host's byte order.
+template <typename TMsg>
+std::optional<TMsg> decodeMsg(const std::array<std::byte, 1200>& aBuf, std::size_t aN)
 {
-    if (aN != sizeof(Messages::SlidePosition))
+    if (aN != TMsg::kWireSize)
         return std::nullopt;
-    Messages::SlidePosition lMsg;
-    std::memcpy(&lMsg, aBuf.data(), sizeof(lMsg));
-    return lMsg;
+    return Messages::fromWire<TMsg>(aBuf.data());
 }
 
-// UDP client. Sends position frames to a fixed server endpoint and reads the
-// server's replies without blocking the game loop.
-//
-// One socket serves both directions: the server replies to the source address
-// of our datagrams, so replies arrive on the very socket we sent from. The game
-// thread only calls send()/poll(); a background thread (started on the first
-// send) only calls receive_from and keeps only the newest frame in an atomic
-// slot. Concurrent send_to + receive_from on one UDP socket is safe at the OS
-// level — they are independent syscalls on the same descriptor.
-class Client
-{
-public:
-    Client() = delete;  // a Client is meaningless without a server address
+// Which end of the connection a NetChannel is. Selects the send/receive message
+// directions and the handful of behavioural asymmetries between the two roles.
+enum class Role { Client, Server };
 
-    Client(std::string_view aServerHost, std::uint16_t aServerPort)
-        : mServer{resolveServer(mIoContext, aServerHost, aServerPort)},
+// One UDP endpoint, parameterised by Role. Client and Server share almost
+// everything — a single socket used for both directions, a background receiver
+// thread that keeps only the newest decoded frame in an atomic mailbox, and
+// sequence-number de-duplication — so this is one class template and the few
+// differences are resolved at compile time (if constexpr / constrained members)
+// rather than duplicated into two near-identical classes:
+//
+//   * direction      — Client sends ClientSlide / receives ServerState; Server
+//                      is the mirror. TxMsg/RxMsg are selected from Role.
+//   * peer endpoint  — Client resolves a fixed server address up front; Server
+//                      has none at startup and latches the client's address from
+//                      the first datagram it receives.
+//   * socket setup   — Client opens an unbound socket (the kernel picks the local
+//                      port on first send); Server binds the well-known port.
+//   * receiver start — Server starts the thread immediately (it must be ready to
+//                      learn the client); Client starts it on the first send.
+//   * send gating    — Server no-ops until it has learned a client; Client can
+//                      always send to its fixed server.
+//
+// The game thread only calls send()/poll(); the receiver thread only calls
+// receive_from. Concurrent send_to + receive_from on one UDP socket is safe at
+// the OS level — they are independent syscalls on the same descriptor.
+template <Role R>
+class NetChannel
+{
+    static constexpr bool kIsServer = (R == Role::Server);
+
+    // The server sends authoritative state and receives the client's slide; the
+    // client is the mirror image. Everything else is symmetric in these aliases.
+    using TxMsg = std::conditional_t<kIsServer, Messages::ServerState, Messages::ClientSlide>;
+    using RxMsg = std::conditional_t<kIsServer, Messages::ClientSlide, Messages::ServerState>;
+
+public:
+    // Client: resolve and remember the server endpoint; open an unbound socket.
+    NetChannel(std::string_view aServerHost, std::uint16_t aServerPort)
+        requires (!kIsServer)
+        : mPeer{resolvePeer(mIoContext, aServerHost, aServerPort)},
           mSocket{mIoContext}
     {
         mSocket.open(boost::asio::ip::udp::v4());  // kernel assigns a local port on first send
     }
 
-    ~Client()
+    // Server: bind the well-known port and start receiving immediately, so the
+    // client's very first datagram is captured.
+    explicit NetChannel(std::uint16_t aLocalPort)
+        requires (kIsServer)
+        : mSocket{mIoContext,
+                  boost::asio::ip::udp::endpoint{boost::asio::ip::udp::v4(), aLocalPort}},
+          mThread{[this](std::stop_token aStop) { recvLoop(aStop); }}  // mThread is last
+    {}
+
+    ~NetChannel()
     {
         boost::system::error_code ec;
-        mSocket.close(ec);  // unblock receive_from; mThread joins (no-op if never started)
+        mSocket.close(ec);  // unblock receive_from so mThread can join (no-op if never started)
     }
 
-    // Game thread. Sends one frame to the server and, on the first call, starts
-    // the background receiver. Caller owns aMsg.mOrderId — increment it per call.
-    void send(const Messages::SlidePosition& aMsg)
+    NetChannel(const NetChannel&)            = delete;  // owns a socket + thread
+    NetChannel& operator=(const NetChannel&) = delete;
+
+    // Game thread. Serialises and sends one frame to the peer. The server no-ops
+    // until it has learned a client; the client lazily starts its receiver on the
+    // first send. Caller owns aMsg.mOrderId — increment it per call.
+    void send(const TxMsg& aMsg)
     {
-        mSocket.send_to(boost::asio::buffer(&aMsg, sizeof(aMsg)), mServer);
-        if (!mThread.joinable())
-            mThread = std::jthread{[this](std::stop_token aStop) { recvLoop(aStop); }};
+        if constexpr (kIsServer)
+        {
+            if (!mHasPeer.load(std::memory_order_acquire))  // acquire also publishes mPeer
+                return;
+        }
+
+        std::array<std::byte, TxMsg::kWireSize> lOut;
+        Messages::toWire(aMsg, lOut.data());
+        mSocket.send_to(boost::asio::buffer(lOut.data(), lOut.size()), mPeer);
+
+        if constexpr (!kIsServer)
+        {
+            if (!mThread.joinable())
+                mThread = std::jthread{[this](std::stop_token aStop) { recvLoop(aStop); }};
+        }
     }
 
-    // Game thread, non-blocking. Writes the newest frame into aMsg and returns
-    // true only when one newer than the last poll has arrived; otherwise leaves
-    // aMsg untouched and returns false.
-    bool poll(Messages::SlidePosition& aMsg)
+    // Game thread, non-blocking. Writes the newest received frame into aMsg and
+    // returns true only when one newer than the last poll has arrived; otherwise
+    // leaves aMsg untouched and returns false.
+    bool poll(RxMsg& aMsg)
     {
-        const Messages::SlidePosition lLatest = mLatest.load(std::memory_order_acquire);
+        const RxMsg lLatest = mLatest.load(std::memory_order_acquire);
         if (lLatest.mOrderId <= mLastSeenOrderId)
             return false;
         mLastSeenOrderId = lLatest.mOrderId;
@@ -74,11 +125,19 @@ public:
         return true;
     }
 
+    // Game thread. Server only: true once the client has been seen (a frame was
+    // received), after which send() will deliver to it.
+    [[nodiscard]] bool hasClient() const noexcept
+        requires (kIsServer)
+    {
+        return mHasPeer.load(std::memory_order_acquire);
+    }
+
 private:
     // Resolves host (numeric IP *or* hostname like "localhost") + port to a v4
-    // UDP endpoint. make_address only parses numeric IPs; a resolver also
-    // handles names. Throws if the host cannot be resolved.
-    static boost::asio::ip::udp::endpoint resolveServer(
+    // UDP endpoint. make_address only parses numeric IPs; a resolver also handles
+    // names. Throws if the host cannot be resolved. (Client role only.)
+    static boost::asio::ip::udp::endpoint resolvePeer(
         boost::asio::io_context& aIo, std::string_view aHost, std::uint16_t aPort)
     {
         boost::asio::ip::udp::resolver lResolver{aIo};
@@ -95,93 +154,20 @@ private:
             try { lN = mSocket.receive_from(boost::asio::buffer(mRecvBuf), lFrom); }
             catch (const boost::system::system_error&) { break; }  // socket closed
 
-            auto lMsg = decodeSlide(mRecvBuf, lN);
-            if (!lMsg || lMsg->mOrderId <= mLastOrderId)  // drop bad / stale / duplicate
-                continue;
-            mLastOrderId = lMsg->mOrderId;
-            mLatest.store(*lMsg, std::memory_order_release);  // keep only the newest
-        }
-    }
-
-    boost::asio::io_context              mIoContext;
-    boost::asio::ip::udp::endpoint       mServer;
-    boost::asio::ip::udp::socket         mSocket;
-    std::array<std::byte, 1200>          mRecvBuf{};
-    std::atomic<Messages::SlidePosition> mLatest{Messages::SlidePosition{-1, 0, 0}};
-    std::int32_t                         mLastOrderId{-1};      // net thread only
-    std::int32_t                         mLastSeenOrderId{-1};  // game thread only
-    std::jthread                         mThread;               // must be last
-};
-
-// UDP server. Receives client position frames without blocking the game loop
-// and sends frames back to the connected client.
-//
-// The background receiver runs immediately, binds the well-known port, learns
-// the client's endpoint from the first datagram, and keeps only the newest
-// frame. send() replies to that learned endpoint. Same single-socket / OS-level
-// thread-safety note as Client.
-class Server
-{
-public:
-    explicit Server(std::uint16_t aLocalPort)
-        : mSocket{mIoContext,
-                  boost::asio::ip::udp::endpoint{boost::asio::ip::udp::v4(), aLocalPort}},
-          mThread{[this](std::stop_token aStop) { recvLoop(aStop); }}  // must be last
-    {}
-
-    ~Server()
-    {
-        boost::system::error_code ec;
-        mSocket.close(ec);  // unblock receive_from; mThread joins
-    }
-
-    // Game thread. True once a client has been seen (a frame was received).
-    [[nodiscard]] bool hasClient() const noexcept
-    {
-        return mHasClient.load(std::memory_order_acquire);
-    }
-
-    // Game thread. Sends one frame to the connected client; no-ops until a
-    // client is known. Caller owns aMsg.mOrderId — increment it per call.
-    void send(const Messages::SlidePosition& aMsg)
-    {
-        if (!mHasClient.load(std::memory_order_acquire))  // acquire also publishes mClient
-            return;
-        mSocket.send_to(boost::asio::buffer(&aMsg, sizeof(aMsg)), mClient);
-    }
-
-    // Game thread, non-blocking. As Client::poll.
-    bool poll(Messages::SlidePosition& aMsg)
-    {
-        const Messages::SlidePosition lLatest = mLatest.load(std::memory_order_acquire);
-        if (lLatest.mOrderId <= mLastSeenOrderId)
-            return false;
-        mLastSeenOrderId = lLatest.mOrderId;
-        aMsg = lLatest;
-        return true;
-    }
-
-private:
-    void recvLoop(std::stop_token aStop)
-    {
-        while (!aStop.stop_requested())
-        {
-            boost::asio::ip::udp::endpoint lFrom;
-            std::size_t lN{0};
-            try { lN = mSocket.receive_from(boost::asio::buffer(mRecvBuf), lFrom); }
-            catch (const boost::system::system_error&) { break; }  // socket closed
-
-            auto lMsg = decodeSlide(mRecvBuf, lN);
+            auto lMsg = decodeMsg<RxMsg>(mRecvBuf, lN);
             if (!lMsg)
                 continue;
 
-            // Latch the client's full endpoint from the first valid datagram so
-            // send() can reply to it. Written once; the release pairs with the
-            // acquire in send()/hasClient().
-            if (!mHasClient.load(std::memory_order_acquire))
+            if constexpr (kIsServer)
             {
-                mClient = lFrom;
-                mHasClient.store(true, std::memory_order_release);
+                // Latch the client's endpoint from the first valid datagram so
+                // send() can reply to it. Written once; the release pairs with
+                // the acquire in send()/hasClient().
+                if (!mHasPeer.load(std::memory_order_acquire))
+                {
+                    mPeer = lFrom;
+                    mHasPeer.store(true, std::memory_order_release);
+                }
             }
 
             if (lMsg->mOrderId <= mLastOrderId)  // drop stale / duplicate
@@ -191,15 +177,23 @@ private:
         }
     }
 
-    boost::asio::io_context              mIoContext;
-    boost::asio::ip::udp::endpoint       mClient;            // write-once (net thread)
-    std::atomic<bool>                    mHasClient{false};  // gates cross-thread reads of mClient
-    boost::asio::ip::udp::socket         mSocket;
-    std::array<std::byte, 1200>          mRecvBuf{};
-    std::atomic<Messages::SlidePosition> mLatest{Messages::SlidePosition{-1, 0, 0}};
-    std::int32_t                         mLastOrderId{-1};      // net thread only
-    std::int32_t                         mLastSeenOrderId{-1};  // game thread only
-    std::jthread                         mThread;               // must be last
+    boost::asio::io_context        mIoContext;
+    // Client: the fixed server address, set in the ctor. Server: the client
+    // address, learned once by the receiver thread and published via mHasPeer.
+    boost::asio::ip::udp::endpoint mPeer;
+    std::atomic<bool>              mHasPeer{false};  // server only; unused on the client
+    boost::asio::ip::udp::socket   mSocket;
+    std::array<std::byte, 1200>    mRecvBuf{};
+    // Single-slot mailbox. orderId -1 means "nothing received yet".
+    std::atomic<RxMsg>             mLatest{RxMsg{.mOrderId = -1}};
+    std::int32_t                   mLastOrderId{-1};      // net thread only
+    std::int32_t                   mLastSeenOrderId{-1};  // game thread only
+    std::jthread                   mThread;               // must be last
 };
+
+// The two roles. Client must always be given a server address (no default
+// constructor exists, since the constructors above are user-declared).
+using Client = NetChannel<Role::Client>;
+using Server = NetChannel<Role::Server>;
 
 #endif  // NET_HPP
